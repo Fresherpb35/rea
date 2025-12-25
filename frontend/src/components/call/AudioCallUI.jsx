@@ -50,15 +50,18 @@ export default function AudioCallUI() {
      RINGTONE (INCOMING)
   ======================== */
   useEffect(() => {
-    if (isReceiver && call && !call.pickedUp) {
-      ringtoneRef.current?.play().catch(() => {});
-    } else {
-      ringtoneRef.current?.pause();
-      if (ringtoneRef.current) ringtoneRef.current.currentTime = 0;
-    }
+  if (isReceiver && call && !call.pickedUp) {
+    ringtoneRef.current?.play().catch(() => {});
+  } else {
+    ringtoneRef.current?.pause();
+    if (ringtoneRef.current) ringtoneRef.current.currentTime = 0;
+  }
 
-    return () => ringtoneRef.current?.pause();
-  }, [call?.pickedUp, isReceiver]);
+  return () => {
+    ringtoneRef.current?.pause();
+  };
+}, [call?.pickedUp, isReceiver]);
+
 
   /* =======================
      ACCEPT CALL
