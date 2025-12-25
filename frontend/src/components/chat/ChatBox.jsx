@@ -1,265 +1,284 @@
-import React, { useEffect, useRef, useState } from "react";
-import { MessageCircle, Phone, Video, Send, ArrowLeft } from "lucide-react";
+import React, { useState, useEffect } from "react";
+import { useParams, useNavigate } from "react-router-dom";
 import {
   collection,
-  query,
   onSnapshot,
-  addDoc,
-  orderBy,
-  serverTimestamp,
-  setDoc,
   doc,
   getDoc,
+  setDoc,
+  updateDoc,
+  serverTimestamp,
 } from "firebase/firestore";
+import { getAuth, onAuthStateChanged } from "firebase/auth";
 
 import { db } from "../../config/firebase";
-import {
-  getChatId,
-  formatMessageTime,
-  markMessagesAsRead,
-} from "../../utils/chatHelpers";
+import { getChatId } from "../../utils/chatHelpers";
 import { useCall } from "../../context/CallContext";
 
-export default function ChatBox({ user, currentUser, onClose }) {
-  const [message, setMessage] = useState("");
-  const [messages, setMessages] = useState([]);
-  const [loading, setLoading] = useState(true); // Optional: show loading state
-  const messagesEndRef = useRef(null);
+import SidebarNavigation from "../../components/layout/SidebarNavigation";
+import MobileBottomNav from "../../components/layout/MobileBottomNav";
+import Header from "../../components/layout/Header";
+import CurrentUserCard from "../../components/chat/CurrentUserCard";
+import UserCard from "../../components/chat/UserCard";
+import ChatBox from "../../components/chat/ChatBox";
+
+const UsersListPage = () => {
+  const { userId } = useParams();
+  const navigate = useNavigate();
   const { startCall } = useCall();
 
-  const chatId =
-    user && currentUser ? getChatId(currentUser.uid, user.uid) : null;
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedUser, setSelectedUser] = useState(null);
+  const [currentUser, setCurrentUser] = useState(null);
+  const [allUsers, setAllUsers] = useState([]);
+  const [lastMessages, setLastMessages] = useState({});
+  const [loading, setLoading] = useState(true);
 
-  // Debug logs — you can remove these later
+  /* ================= AUTH ================= */
   useEffect(() => {
-    console.log("Current User:", currentUser);
-    console.log("Chat Partner:", user);
-    console.log("Chat ID:", chatId);
-  }, [currentUser, user, chatId]);
+    const auth = getAuth();
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (!user) {
+        navigate("/login");
+        return;
+      }
 
-  /* ---------- AUTO SCROLL ---------- */
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+      const userRef = doc(db, "users", user.uid);
+      const snap = await getDoc(userRef);
 
-  /* ---------- INIT CHAT + LISTEN TO MESSAGES ---------- */
-  useEffect(() => {
-    if (!chatId || !currentUser) {
-      setLoading(false);
-      return;
-    }
-
-    setLoading(true);
-
-    const initChat = async () => {
-      const chatRef = doc(db, "chats", chatId);
-      const snap = await getDoc(chatRef);
+      const baseData = {
+        uid: user.uid,
+        email: user.email,
+        displayName: user.displayName || "",
+        photoURL: user.photoURL || "",
+        online: true,
+        lastSeen: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      };
 
       if (!snap.exists()) {
-        await setDoc(chatRef, {
-          participants: [currentUser.uid, user.uid],
-          lastMessage: "",
-          lastMessageTime: serverTimestamp(),
-          lastMessageSenderId: null,
-          [`unreadCount_${currentUser.uid}`]: 0,
-          [`unreadCount_${user.uid}`]: 0,
+        await setDoc(userRef, {
+          ...baseData,
+          createdAt: serverTimestamp(),
+          bio: "",
+        });
+      } else {
+        await updateDoc(userRef, {
+          online: true,
+          lastSeen: serverTimestamp(),
         });
       }
-    };
 
-    initChat().catch(console.error);
-
-    const q = query(
-      collection(db, "chats", chatId, "messages"),
-      orderBy("timestamp", "asc")
-    );
-
-    const unsub = onSnapshot(q, async (snap) => {
-      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      setMessages(list);
+      const updatedSnap = await getDoc(userRef);
+      setCurrentUser({ uid: user.uid, ...updatedSnap.data() });
       setLoading(false);
-
-      // Mark messages as read for current user
-      if (list.length > 0) {
-        await markMessagesAsRead(chatId, currentUser.uid).catch(console.error);
-      }
     });
 
-    return () => unsub();
-  }, [chatId, currentUser, user]);
+    return () => unsubscribe();
+  }, [navigate]);
 
-  /* ---------- SEND MESSAGE ---------- */
-  const handleSendMessage = async () => {
-    if (!message.trim() || !chatId || !currentUser || !user) return;
+  /* ================= FETCH CHATTED USERS ================= */
+  useEffect(() => {
+    if (!currentUser?.uid) return;
 
-    const text = message.trim();
-    setMessage("");
+    const chatsRef = collection(db, "users", currentUser.uid, "chats");
 
-    try {
+    const unsubscribe = onSnapshot(chatsRef, async (snapshot) => {
+      if (snapshot.empty) {
+        setAllUsers([]);
+        setLastMessages({});
+        return;
+      }
+
+      const usersData = [];
+      const lastMsgMap = {};
+
+      for (const chatDoc of snapshot.docs) {
+        const data = chatDoc.data();
+        const otherUserId = data.otherUserId;
+        lastMsgMap[otherUserId] = {
+          text: data.lastMessage || "",
+          timestamp: data.lastMessageTime || null,
+          unreadCount: data.unreadCount || 0,
+        };
+
+        const userRef = doc(db, "users", otherUserId);
+        const userSnap = await getDoc(userRef);
+        if (userSnap.exists()) {
+          usersData.push({ uid: userSnap.id, ...userSnap.data() });
+        }
+      }
+
+      // Sort users by last message time descending
+      usersData.sort((a, b) => {
+        const t1 = lastMsgMap[a.uid]?.timestamp?.toMillis?.() || 0;
+        const t2 = lastMsgMap[b.uid]?.timestamp?.toMillis?.() || 0;
+        return t2 - t1;
+      });
+
+      setAllUsers(usersData);
+      setLastMessages(lastMsgMap);
+    });
+
+    return () => unsubscribe();
+  }, [currentUser]);
+
+  /* ================= AUTO OPEN CHAT FROM URL ================= */
+  useEffect(() => {
+    if (!userId || !currentUser) return;
+
+    const openChatFromUrl = async () => {
+      const userRef = doc(db, "users", userId);
+      const userSnap = await getDoc(userRef);
+
+      if (!userSnap.exists()) return;
+
+      const otherUser = { uid: userSnap.id, ...userSnap.data() };
+      setSelectedUser(otherUser);
+
+      const chatId = getChatId(currentUser.uid, userId);
       const chatRef = doc(db, "chats", chatId);
       const chatSnap = await getDoc(chatRef);
 
-      const unread = chatSnap.exists()
-        ? chatSnap.data()[`unreadCount_${user.uid}`] || 0
-        : 0;
-
-      // Add message to subcollection
-      await addDoc(collection(db, "chats", chatId, "messages"), {
-        text,
-        senderId: currentUser.uid,
-        senderName: currentUser.displayName || currentUser.email || "User",
-        senderPhoto: currentUser.photoURL || "",
-        timestamp: serverTimestamp(),
-        readBy: [currentUser.uid],
-      });
-
-      // Update main chat document
-      await setDoc(
-        chatRef,
-        {
-          participants: [currentUser.uid, user.uid],
-          lastMessage: text,
-          lastMessageTime: serverTimestamp(),
-          lastMessageSenderId: currentUser.uid,
-          [`unreadCount_${user.uid}`]: unread + 1,
+      if (!chatSnap.exists()) {
+        await setDoc(chatRef, {
+          participants: [currentUser.uid, userId],
+          createdAt: serverTimestamp(),
+          lastMessage: "",
+          lastMessageTime: null,
           [`unreadCount_${currentUser.uid}`]: 0,
+          [`unreadCount_${userId}`]: 0,
+        });
+      }
+
+      // Ensure chat exists in per-user chat lists
+      await setDoc(
+        doc(db, "users", currentUser.uid, "chats", chatId),
+        {
+          chatId,
+          otherUserId: userId,
+          otherUserName: otherUser.displayName || otherUser.email || "User",
+          otherUserPhoto: otherUser.photoURL || "",
+          lastMessage: "",
+          lastMessageTime: null,
+          unreadCount: 0,
         },
         { merge: true }
       );
-    } catch (err) {
-      console.error("Send message failed:", err);
-      alert("Failed to send message: " + err.message);
-      setMessage(text); // Restore message if failed
-    }
+
+      await setDoc(
+        doc(db, "users", userId, "chats", chatId),
+        {
+          chatId,
+          otherUserId: currentUser.uid,
+          otherUserName:
+            currentUser.displayName || currentUser.email || "User",
+          otherUserPhoto: currentUser.photoURL || "",
+          lastMessage: "",
+          lastMessageTime: null,
+          unreadCount: 0,
+        },
+        { merge: true }
+      );
+    };
+
+    openChatFromUrl();
+  }, [userId, currentUser]);
+
+  /* ================= CALL ================= */
+  const handleCallUser = (user, type) => {
+    if (!currentUser) return;
+
+    startCall({
+      type,
+      caller: currentUser,
+      receiver: user,
+      channel: `call_${getChatId(currentUser.uid, user.uid)}`,
+    });
   };
 
-  const handleKeyPress = (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSendMessage();
-    }
-  };
+  /* ================= SEARCH ================= */
+  const filteredUsers = allUsers.filter((user) =>
+    (user.displayName || user.email || "")
+      .toLowerCase()
+      .includes(searchQuery.toLowerCase())
+  );
 
-  /* ---------- RENDER STATES ---------- */
-
-  // If no current user (not logged in)
-  if (!currentUser) {
+  /* ================= UI ================= */
+  if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center bg-gray-50">
-        <p className="text-gray-500">Loading user...</p>
+      <div className="min-h-screen flex items-center justify-center">
+        <p>Loading...</p>
       </div>
     );
   }
 
-  // If no chat partner selected
-  if (!user) {
-    return (
-      <div className="flex-1 flex items-center justify-center bg-gray-50">
-        <div className="text-center">
-          <MessageCircle size={60} className="text-gray-300 mx-auto mb-4" />
-          <p className="text-gray-500 text-lg">Select a chat to start messaging</p>
-        </div>
-      </div>
-    );
-  }
-
-  // Main chat interface
   return (
-    <div className="flex-1 flex flex-col bg-white h-full">
-      {/* HEADER */}
-      <div className="flex items-center justify-between p-4 bg-pink-500 text-white shadow-md">
-        <div className="flex items-center gap-3">
-          <button onClick={onClose} className="hover:bg-pink-600 p-2 rounded">
-            <ArrowLeft size={24} />
-          </button>
-          <img
-            src={user.photoURL || "https://placehold.co/40x40?text=U"}
-            alt="profile"
-            className="w-10 h-10 rounded-full object-cover"
-          />
-          <div>
-            <h4 className="font-semibold text-lg">
-              {user.displayName || user.email || "Unknown User"}
-            </h4>
-            <p className="text-sm opacity-80">{user.online ? "Online" : "Offline"}</p>
-          </div>
-        </div>
+    <div className="min-h-screen flex bg-pink-50">
+      <SidebarNavigation />
 
-        <div className="flex gap-4">
-          <button
-            onClick={() => startCall({ type: "audio", caller: currentUser, receiver: user })}
-            className="hover:bg-pink-600 p-2 rounded-full transition"
-          >
-            <Phone size={22} />
-          </button>
-          <button
-            onClick={() => startCall({ type: "video", caller: currentUser, receiver: user })}
-            className="hover:bg-pink-600 p-2 rounded-full transition"
-          >
-            <Video size={22} />
-          </button>
-        </div>
-      </div>
+      <div className="flex-1 flex flex-col lg:ml-64">
+        <Header allUsers={allUsers} />
 
-      {/* MESSAGES AREA */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50">
-        {loading ? (
-          <div className="text-center text-gray-500">Loading messages...</div>
-        ) : messages.length === 0 ? (
-          <div className="text-center text-gray-500 mt-10">
-            No messages yet. Start the conversation!
+        <div className="flex flex-1 overflow-hidden">
+          {/* USERS LIST */}
+          <div
+            className={`${
+              selectedUser ? "hidden lg:flex" : "flex"
+            } flex-col w-full lg:w-96 bg-white border-r`}
+          >
+            <CurrentUserCard user={currentUser} />
+
+            <div className="p-4 border-b">
+              <input
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search chats..."
+                className="w-full p-3 border rounded-lg"
+              />
+            </div>
+
+            <div className="flex-1 overflow-y-auto">
+              {filteredUsers.map((user) => (
+                <UserCard
+                  key={user.uid}
+                  user={user}
+                  onSelect={() => {
+                    setSelectedUser(user);
+                    navigate(`/userlist/${user.uid}`);
+                  }}
+                  onCall={() => handleCallUser(user, "audio")}
+                  onVideo={() => handleCallUser(user, "video")}
+                  isSelected={selectedUser?.uid === user.uid}
+                  lastMessage={lastMessages[user.uid]}
+                />
+              ))}
+            </div>
           </div>
-        ) : (
-          messages.map((msg) => {
-            const isMe = msg.senderId === currentUser.uid;
-            return (
-              <div
-                key={msg.id}
-                className={`flex ${isMe ? "justify-end" : "justify-start"}`}
-              >
-                <div
-                  className={`px-4 py-2 rounded-2xl max-w-[70%] shadow-sm ${
-                    isMe
-                      ? "bg-pink-500 text-white"
-                      : "bg-white border border-gray-200"
-                  }`}
-                >
-                  <p className="break-words">{msg.text}</p>
-                  <p
-                    className={`text-xs mt-1 text-right ${
-                      isMe ? "opacity-80" : "text-gray-500"
-                    }`}
-                  >
-                    {formatMessageTime(msg.timestamp)}
-                  </p>
-                </div>
+
+          {/* CHAT BOX */}
+          <div className="flex-1">
+            {selectedUser ? (
+              <ChatBox
+                user={selectedUser}
+                currentUser={currentUser}
+                onClose={() => {
+                  setSelectedUser(null);
+                  navigate("/userlist");
+                }}
+              />
+            ) : (
+              <div className="h-full flex items-center justify-center text-gray-400">
+                Select a chat to start messaging
               </div>
-            );
-          })
-        )}
-        <div ref={messagesEndRef} />
-      </div>
-
-      {/* INPUT AREA */}
-      <div className="p-4 border-t bg-white">
-        <div className="flex gap-3">
-          <textarea
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-            onKeyDown={handleKeyPress}
-            rows={1}
-            placeholder="Type a message..."
-            className="flex-1 resize-none border border-gray-300 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-pink-500 focus:border-transparent"
-          />
-          <button
-            onClick={handleSendMessage}
-            disabled={!message.trim()}
-            className="bg-pink-500 text-white p-3 rounded-full hover:bg-pink-600 disabled:opacity-50 disabled:cursor-not-allowed transition shadow-md"
-          >
-            <Send size={20} />
-          </button>
+            )}
+          </div>
         </div>
       </div>
+
+      {!selectedUser && <MobileBottomNav />}
     </div>
   );
-}
+};
+
+export default UsersListPage;
