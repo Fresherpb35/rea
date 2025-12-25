@@ -30,7 +30,7 @@ export default function VideoCallUI() {
   const joinedRef = useRef(false);
   const ringAudioRef = useRef(null);
 
-  if (!call) return null;
+  if (!call || !user) return null;
 
   const isReceiver = call.receiverId === user.uid;
   const otherUser = isReceiver ? call.caller : call.receiver;
@@ -39,25 +39,21 @@ export default function VideoCallUI() {
   useEffect(() => {
     if (!call.pickedUp) return;
 
-    const i = setInterval(() => {
-      setSeconds((s) => s + 1);
-    }, 1000);
-
+    const i = setInterval(() => setSeconds((s) => s + 1), 1000);
     return () => clearInterval(i);
   }, [call.pickedUp]);
 
-  const formatTime = () => {
-    const m = String(Math.floor(seconds / 60)).padStart(2, "0");
-    const s = String(seconds % 60).padStart(2, "0");
-    return `${m}:${s}`;
-  };
+  const formatTime = () =>
+    `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(
+      seconds % 60
+    ).padStart(2, "0")}`;
 
   /* ---------------- RING TONE ---------------- */
   useEffect(() => {
-    ringAudioRef.current = new Audio("/sounds/ringtone.mp3");
-    ringAudioRef.current.loop = true;
-
-    if (!call.pickedUp) {
+    // Play ringtone only if incoming call and not picked up
+    if (isReceiver && !call.pickedUp) {
+      ringAudioRef.current = new Audio("/sounds/ringtone.mp3");
+      ringAudioRef.current.loop = true;
       ringAudioRef.current.play().catch(() => {});
     }
 
@@ -65,7 +61,7 @@ export default function VideoCallUI() {
       ringAudioRef.current?.pause();
       ringAudioRef.current = null;
     };
-  }, []);
+  }, [isReceiver, call.pickedUp]);
 
   /* ---------------- AGORA START ---------------- */
   const startVideo = async () => {
@@ -76,7 +72,6 @@ export default function VideoCallUI() {
 
   useEffect(() => {
     if (!isReceiver) startVideo();
-
     return () => {
       leaveAgora();
       joinedRef.current = false;
@@ -91,6 +86,7 @@ export default function VideoCallUI() {
   };
 
   const endHandler = async () => {
+    ringAudioRef.current?.pause();
     await leaveAgora();
     joinedRef.current = false;
     endCall();
@@ -109,10 +105,7 @@ export default function VideoCallUI() {
         onClick={() => setMinimized(false)}
         className="fixed bottom-6 right-6 w-16 h-16 rounded-full bg-black border border-white/30 z-[9999] flex items-center justify-center shadow-xl cursor-pointer"
       >
-        <img
-          src={otherUser.photoURL}
-          className="w-12 h-12 rounded-full"
-        />
+        <img src={otherUser.photoURL} className="w-12 h-12 rounded-full" />
       </div>
     );
   }
@@ -123,22 +116,15 @@ export default function VideoCallUI() {
       <div id="remote-player" className="w-full h-full relative">
         {!camOn && (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-black">
-            <img
-              src={otherUser.photoURL}
-              className="w-28 h-28 rounded-full mb-4"
-            />
-            <p className="text-lg font-semibold">
-              {otherUser.displayName}
-            </p>
+            <img src={otherUser.photoURL} className="w-28 h-28 rounded-full mb-4" />
+            <p className="text-lg font-semibold">{otherUser.displayName}</p>
           </div>
         )}
       </div>
 
       {/* TOP BAR */}
       <div className="absolute top-0 left-0 w-full p-4 bg-gradient-to-b from-black/70 to-transparent">
-        <p className="text-lg font-semibold">
-          {otherUser.displayName}
-        </p>
+        <p className="text-lg font-semibold">{otherUser.displayName}</p>
         <p className="text-sm text-white/70">{statusText()}</p>
       </div>
 
@@ -147,28 +133,17 @@ export default function VideoCallUI() {
         id="local-player"
         className="absolute bottom-24 right-4 w-32 h-44 bg-black border border-white/20 rounded-lg overflow-hidden flex items-center justify-center"
       >
-        {!camOn && (
-          <img
-            src={user.photoURL}
-            className="w-20 h-20 rounded-full opacity-80"
-          />
-        )}
+        {!camOn && <img src={user.photoURL} className="w-20 h-20 rounded-full opacity-80" />}
       </div>
 
       {/* CONTROLS */}
       <div className="absolute bottom-6 w-full flex justify-center">
         {isReceiver && !call.pickedUp ? (
           <div className="flex gap-8">
-            <button
-              onClick={acceptCall}
-              className="px-6 py-4 bg-green-600 rounded-full"
-            >
+            <button onClick={acceptCall} className="px-6 py-4 bg-green-600 rounded-full">
               Accept
             </button>
-            <button
-              onClick={endHandler}
-              className="px-6 py-4 bg-red-600 rounded-full"
-            >
+            <button onClick={endHandler} className="px-6 py-4 bg-red-600 rounded-full">
               Reject
             </button>
           </div>
@@ -180,9 +155,7 @@ export default function VideoCallUI() {
                 await toggleMic(!micOn);
                 setMicOn(!micOn);
               }}
-              className={`p-3 rounded-full ${
-                micOn ? "bg-white/20" : "bg-red-500"
-              }`}
+              className={`p-3 rounded-full ${micOn ? "bg-white/20" : "bg-red-500"}`}
             >
               {micOn ? <Mic /> : <MicOff />}
             </button>
@@ -193,34 +166,23 @@ export default function VideoCallUI() {
                 await toggleCamera(!camOn);
                 setCamOn(!camOn);
               }}
-              className={`p-3 rounded-full ${
-                camOn ? "bg-white/20" : "bg-red-500"
-              }`}
+              className={`p-3 rounded-full ${camOn ? "bg-white/20" : "bg-red-500"}`}
             >
               {camOn ? <Video /> : <VideoOff />}
             </button>
 
             {/* SWITCH CAMERA */}
-            <button
-              onClick={switchCamera}
-              className="p-3 rounded-full bg-white/20"
-            >
+            <button onClick={switchCamera} className="p-3 rounded-full bg-white/20">
               <RotateCw />
             </button>
 
             {/* MINIMIZE */}
-            <button
-              onClick={() => setMinimized(true)}
-              className="p-3 rounded-full bg-white/20"
-            >
+            <button onClick={() => setMinimized(true)} className="p-3 rounded-full bg-white/20">
               <Minus />
             </button>
 
             {/* END */}
-            <button
-              onClick={endHandler}
-              className="p-3 rounded-full bg-red-600"
-            >
+            <button onClick={endHandler} className="p-3 rounded-full bg-red-600">
               <PhoneOff />
             </button>
           </div>
