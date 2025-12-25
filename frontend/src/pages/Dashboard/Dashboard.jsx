@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { 
   ArrowLeft, Heart, RefreshCw, Home, Grid, MessageCircle, User, X, 
-  ChevronLeft, ChevronRight, Filter, Check 
+  ChevronLeft, ChevronRight, Filter, Check, SkipForward
 } from 'lucide-react';
 import { 
   getFirestore, 
@@ -160,7 +160,7 @@ const FilterModal = ({ isOpen, onClose, filters, onFilterChange }) => {
 };
 
 // Profile Card Component
-const ProfileCard = ({ profile, onLike, onDislike, onMessage }) => {
+const ProfileCard = ({ profile, onLike, onSkip, onMessage }) => {
   const age = profile.dob ? calculateAge(profile.dob) : null;
 
   return (
@@ -179,8 +179,8 @@ const ProfileCard = ({ profile, onLike, onDislike, onMessage }) => {
       </div>
 
       <div className="hidden lg:flex absolute bottom-8 right-8 gap-4 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-        <button onClick={onDislike} className="bg-white/20 backdrop-blur-md hover:bg-white/30 p-4 rounded-full transition-all duration-200 hover:scale-110">
-          <X className="text-white" size={32} />
+        <button onClick={onSkip} className="bg-gray-500/80 backdrop-blur-md hover:bg-gray-600 p-4 rounded-full transition-all duration-200 hover:scale-110">
+          <SkipForward className="text-white" size={32} />
         </button>
         <button onClick={onMessage} className="bg-purple-500/80 backdrop-blur-md hover:bg-purple-500 p-4 rounded-full transition-all duration-200 hover:scale-110">
           <MessageCircle className="text-white" size={32} />
@@ -255,7 +255,7 @@ const HomeDashboard = () => {
     return () => unsubscribe();
   }, []);
 
-  // Fetch all profiles
+  // Fetch all profiles (exclude current user and skipped users)
   useEffect(() => {
     if (!currentUser) return;
 
@@ -265,7 +265,7 @@ const HomeDashboard = () => {
         .map(doc => ({ uid: doc.id, ...doc.data() }))
         .filter(profile => 
           profile.uid !== currentUser.uid && 
-          !currentUser.dislikedUsers?.includes(profile.uid)
+          !currentUser.skippedUsers?.includes(profile.uid) // Filter out skipped users
         );
       
       setAllProfiles(profiles);
@@ -345,18 +345,27 @@ const HomeDashboard = () => {
     }
   };
 
-  const handleDislike = async () => {
+  const handleSkip = async () => {
     if (!currentUser || filteredProfiles.length === 0) return;
-    const dislikedProfile = filteredProfiles[currentProfileIndex];
+    const skippedProfile = filteredProfiles[currentProfileIndex];
 
     try {
-      await updateDoc(doc(db, 'users', currentUser.uid), {
-        dislikedUsers: arrayUnion(dislikedProfile.uid),
+      const userRef = doc(db, 'users', currentUser.uid);
+      await updateDoc(userRef, {
+        skippedUsers: arrayUnion(skippedProfile.uid),
         updatedAt: serverTimestamp()
       });
+
+      // Update local state to reflect the skip
+      setCurrentUser(prev => ({
+        ...prev,
+        skippedUsers: [...(prev.skippedUsers || []), skippedProfile.uid]
+      }));
+
       nextProfile();
     } catch (error) {
-      console.error('Error disliking:', error);
+      console.error('Error skipping profile:', error);
+      alert('Failed to skip profile.');
     }
   };
 
@@ -466,8 +475,8 @@ const HomeDashboard = () => {
                 <div className="relative" style={{ aspectRatio: '3/4' }}>
                   <ProfileCard 
                     profile={filteredProfiles[currentProfileIndex]} 
-                    onLike={handleLike} 
-                    onDislike={handleDislike}
+                    onLike={handleLike}
+                    onSkip={handleSkip}
                     onMessage={() => handleMessage(filteredProfiles[currentProfileIndex].uid)}
                   />
 
@@ -488,8 +497,8 @@ const HomeDashboard = () => {
                 </div>
 
                 <div className="lg:hidden flex justify-center gap-6 mt-6">
-                  <button onClick={handleDislike} className="bg-white hover:bg-gray-50 p-5 rounded-full shadow-lg transition-all duration-200 hover:scale-110">
-                    <X className="text-gray-700" size={32} />
+                  <button onClick={handleSkip} className="bg-gray-500 hover:bg-gray-600 p-5 rounded-full shadow-lg transition-all duration-200 hover:scale-110">
+                    <SkipForward className="text-white" size={32} />
                   </button>
                   <button onClick={() => handleMessage(filteredProfiles[currentProfileIndex].uid)} className="bg-purple-500 hover:bg-purple-600 p-5 rounded-full shadow-lg transition-all duration-200 hover:scale-110">
                     <MessageCircle className="text-white" size={32} />
