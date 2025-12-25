@@ -50,18 +50,26 @@ export default function VideoCallUI() {
 
   /* ---------------- RING TONE ---------------- */
   useEffect(() => {
-    // Play ringtone only if incoming call and not picked up
-    if (isReceiver && !call.pickedUp) {
-      ringAudioRef.current = new Audio("/sounds/ringtone.mp3");
-      ringAudioRef.current.loop = true;
-      ringAudioRef.current.play().catch(() => {});
-    }
+  // Play ringtone only if incoming call and not picked up
+  if (isReceiver && !call?.pickedUp) {
+    ringAudioRef.current = new Audio('/sounds/ringtone.mp3');
+    ringAudioRef.current.loop = true;
 
-    return () => {
-      ringAudioRef.current?.pause();
+    ringAudioRef.current.play().catch(() => {
+      // autoplay blocked – safe to ignore
+    });
+  }
+
+  // Cleanup: stop ringtone
+  return () => {
+    if (ringAudioRef.current) {
+      ringAudioRef.current.pause();
+      ringAudioRef.current.currentTime = 0;
       ringAudioRef.current = null;
-    };
-  }, [isReceiver, call.pickedUp]);
+    }
+  };
+}, [isReceiver, call?.pickedUp]);
+
 
   /* ---------------- AGORA START ---------------- */
   const startVideo = async () => {
