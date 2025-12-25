@@ -2,6 +2,9 @@
 import React, { useState } from 'react';
 import { Mail, ArrowLeft } from 'lucide-react';
 import { useNavigate } from "react-router-dom";
+import { sendPasswordResetEmail } from "firebase/auth";
+import { auth } from "../../config/firebase"; // adjust path if needed
+
 // Reusable Button Component
 const Button = ({ 
   children, 
@@ -97,29 +100,47 @@ const navigate = useNavigate();
     return emailRegex.test(email);
   };
 
-  const handleSubmit = async () => {
-    setError('');
-    setSuccessMessage('');
+ const handleSubmit = async () => {
+  setError('');
+  setSuccessMessage('');
 
-    if (!email.trim()) {
-      setError('Email is required');
-      return;
+  if (!email.trim()) {
+    setError('Email is required');
+    return;
+  }
+
+  if (!validateEmail(email)) {
+    setError('Please enter a valid email address');
+    return;
+  }
+
+  setIsLoading(true);
+
+  try {
+    await sendPasswordResetEmail(auth, email);
+    setSuccessMessage(`A password reset link has been sent to ${email}`);
+  } catch (err) {
+    console.error("Password reset error:", err);
+
+    if (err.code === "auth/user-not-found") {
+      setError("No account found with this email");
+    } else if (err.code === "auth/invalid-email") {
+      setError("Invalid email address");
+    } else {
+      setError("Failed to send reset email. Try again later.");
     }
+  } finally {
+    setIsLoading(false);
+  }
 
-    if (!validateEmail(email)) {
-      setError('Please enter a valid email address');
-      return;
-    }
 
-    // Successful submission
-   
-    setIsSubmitted(true);
-    
-    // Simulate sending email
-    setTimeout(() => {
-      alert(`Password reset link sent to:\n${email}`);
-    }, 500);
-  };
+  // simulate API call
+  setTimeout(() => {
+    setIsLoading(false);
+    setSuccessMessage(`A password reset link has been sent to ${email}`);
+  }, 1000);
+};
+
 
   const handleBackToLogin = () => {
   
@@ -184,7 +205,8 @@ const navigate = useNavigate();
             </div>
           ) : (
             <div className="space-y-5">
-              <div onKeyPress={handleKeyPress}>
+            <div onKeyDown={handleKeyPress}>
+
                 <Input
                   type="email"
                   placeholder="Enter your Email"
